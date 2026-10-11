@@ -1,0 +1,7 @@
+.DS_Store
+# data mentah WITS (14 MB), dibuat ulang lewat tools/build_data.py kalau perlu
+*.csv
+# cache peta untuk build, diunduh otomatis
+tools/world_110m.json
+# draf mockup awal
+mockups/
