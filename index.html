@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dashboard Perdagangan Indonesia</title>
-<meta name="description" content="Ekspor dan impor Indonesia 2025 dibanding 2024, global dan per negara mitra. Sumber: WITS (World Bank).">
+<title>Dashboard Perdagangan Internasional Indonesia</title>
+<meta name="description" content="Dashboard Perdagangan Internasional Indonesia: ekspor dan impor Indonesia 2025 dibanding 2024, global dan per negara mitra. Sumber: WITS (World Bank).">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -14,15 +14,20 @@ body{background:#f4f3ef;color:#0b0b0b;font:400 13px/1.35 "IBM Plex Sans",system-
 .root{height:100vh;min-height:660px;min-width:1180px;padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
 button{font:inherit;color:inherit}
 .hd{display:flex;align-items:center;gap:14px;height:32px;flex:none}
-.hd h1{margin:0;font-size:19px;font-weight:700;letter-spacing:-.01em}
-.crumb{color:#52514e;font-size:13px}.crumb b{color:#0b0b0b;font-weight:600}
+.hd h1{margin:0;font-size:18px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;flex:none}
+/* header satu baris: nama negara panjang memotong remah (nama lengkapnya tetap di tombol kanan), lalu teks sumber */
+.crumb{color:#52514e;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1000 auto}.crumb b{color:#0b0b0b;font-weight:600}
+.hd .seg{flex:none}
+#cBtn{max-width:210px;overflow:hidden;text-overflow:ellipsis}
 .sp{flex:1}
-.src{color:#6f6e68;font-size:12px}
+.src{color:#6f6e68;font-size:12px;white-space:nowrap;flex:none}
 .seg{display:inline-flex;border:1px solid rgba(11,11,11,.18);border-radius:7px;padding:2px;background:#fcfcfb}
 .sg{white-space:nowrap;border:0;background:none;padding:3px 10px;border-radius:5px;color:#52514e;font-size:12.5px;cursor:pointer}
 .sg:hover{color:#0b0b0b}
 .sg.on{background:#0b0b0b;color:#fff}
 .back{border:1px solid rgba(11,11,11,.18);background:#fcfcfb;border-radius:6px;padding:3px 10px;font-weight:500;cursor:pointer}
+.back:hover{background:#fff}
+.mback{position:absolute;left:10px;top:10px;z-index:3;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 .hide{display:none!important}
 .pn{background:#fcfcfb;border:1px solid rgba(11,11,11,.09);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
 .ph{display:flex;align-items:center;gap:8px;margin-bottom:5px;flex:none}
@@ -42,12 +47,24 @@ button{font:inherit;color:inherit}
 #wrap{position:absolute;left:0;top:0}
 #plot{position:absolute;left:0;top:0}
 #plot .choroplethlocation{cursor:pointer}
+#plot .layer.countries,#plot .layer.coastlines{transition:opacity .3s}
+.fly #plot .layer.countries,.fly #plot .layer.coastlines{opacity:0;transition:none}
+.fly #plot .choroplethlayer .trace:first-child{display:none}
 #ov{position:absolute;left:0;top:0;pointer-events:none}
 #chips{position:absolute;left:0;top:0;pointer-events:none}
 .fl{fill:none;stroke-linecap:round}
-.dsh{fill:none;stroke:rgba(255,255,255,.75);stroke-width:3;stroke-linecap:round;stroke-dasharray:2 16;animation:dsh .9s linear infinite}
+/* selama kamera bergerak (.mv) panah, label, dan peta mini disembunyikan; setelah mendarat panah tergambar lalu titik putih mengalir */
+#ov,#chips,#mini{transition:opacity .15s}
+.mv #ov,.mv #chips,.mv #mini,#mini.fo{opacity:0}
+#mini{transition-duration:.3s}
+.drw{stroke-dasharray:var(--l) var(--l);stroke-dashoffset:var(--l);animation:drw .65s cubic-bezier(.3,0,.2,1) forwards}
+@keyframes drw{to{stroke-dashoffset:0}}
+.fi{opacity:0;animation:fi .3s ease-out .45s forwards}
+.fi.f0{animation-delay:0s}
+@keyframes fi{to{opacity:1}}
+.dsh{fill:none;stroke:rgba(255,255,255,.75);stroke-width:3;stroke-linecap:round;stroke-dasharray:2 16;opacity:0;animation:dsh .9s linear infinite,fi .3s ease-out .65s forwards}
 @keyframes dsh{from{stroke-dashoffset:0}to{stroke-dashoffset:-18}}
-@media (prefers-reduced-motion:reduce){.dsh{animation:none}}
+@media (prefers-reduced-motion:reduce){.dsh,.drw,.fi{animation:none;opacity:1}.drw{stroke-dasharray:none}#ov,#chips,#mini{transition:none}}
 .ac{position:absolute;background:rgba(252,252,251,.94);padding:2px 7px;border-radius:2px;font-size:12.5px;color:#0b0b0b;white-space:nowrap}
 .ac b{font-weight:700}
 .ac.cb{border:1.5px solid #2a78d6}.ac.co{border:1.5px solid #eb6834}.ac.nm0{border:1.5px solid #0b0b0b}
@@ -93,8 +110,7 @@ button{font:inherit;color:inherit}
 <body>
 <div class="root">
   <header class="hd">
-    <button class="back hide" id="back" type="button">← Kembali ke global</button>
-    <h1>Perdagangan Indonesia</h1>
+    <h1>Dashboard Perdagangan Internasional Indonesia</h1>
     <div class="crumb"><span>Seluruh dunia</span><span id="tail" class="hide"> › <b id="tailNm"></b></span></div>
     <div class="sp"></div>
     <span class="src">2025 vs 2024 · Sumber: WITS (World Bank) · HS 2 digit · US$ miliar</span>
@@ -112,6 +128,7 @@ button{font:inherit;color:inherit}
       <div class="map" id="map">
         <div id="wrap"><div id="plot"></div><svg id="ov" aria-hidden="true"></svg><div id="chips"></div></div>
         <div id="mini" class="hide"></div>
+        <button class="back mback hide" id="back" type="button">← Kembali ke global</button>
         <div class="lgd" id="lgd"></div>
         <span class="cap" id="cap"></span>
       </div>

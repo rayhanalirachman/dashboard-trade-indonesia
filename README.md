@@ -1,4 +1,4 @@
-# Dashboard Perdagangan Indonesia
+# Dashboard Perdagangan Internasional Indonesia
 
 Ekspor dan impor Indonesia 2025 dibanding 2024, global dan per negara mitra.
 Sumber data: [WITS](https://wits.worldbank.org) (World Bank), produk HS 2 digit, nilai dalam US$ miliar.

@@ -27,7 +27,7 @@
     im: { val: c => c.t[1], z: lg10, lo: -1.3, hi: 2.0, sc: ORG, lg: ['0,1', '100', 'US$ miliar'], cap: 'Warna negara = nilai impor Indonesia dari negara itu, 2025' },
     bal: { val: c => c.t[0] - c.t[1], z: x => Math.sign(x) * Math.log10(1 + Math.abs(x) * 5), lo: -2.2, hi: 2.2, sc: DIV, lg: ['defisit', 'surplus', ''], cap: 'Biru = surplus bagi Indonesia, oranye = defisit (ekspor dikurangi impor), 2025' }
   };
-  const base = { showland: true, landcolor: '#fcfcfb', showocean: true, oceancolor: BG, showlakes: false, showcountries: true, countrycolor: '#c3c2ba', countrywidth: 0.5, showcoastlines: true, coastlinecolor: '#b3b2aa', coastlinewidth: 0.5, showframe: false, bgcolor: BG, domain: { x: [0, 1], y: [0, 1] } };
+  const base = { showland: true, landcolor: '#fcfcfb', showocean: false, showlakes: false, showcountries: true, countrycolor: '#c3c2ba', countrywidth: 0.5, showcoastlines: true, coastlinecolor: '#b3b2aa', coastlinewidth: 0.5, showframe: false, bgcolor: BG, domain: { x: [0, 1], y: [0, 1] } };
   const gray = { ...base, landcolor: '#ecebe6', countrycolor: '#fff', countrywidth: 0.6, coastlinecolor: '#d6d5cd' };
   const mk = (geo, w, h) => ({ geo, width: w, height: h, margin: { l: 0, r: 0, t: 0, b: 0 }, paper_bgcolor: BG, dragmode: false, font: { family: FONT }, hoverlabel: { bgcolor: '#fcfcfb', bordercolor: '#c3c2ba', font: { family: FONT, size: 12, color: '#0b0b0b' } } });
   const CFG = { displayModeBar: false, scrollZoom: false, doubleClick: false, showTips: false };
@@ -37,7 +37,10 @@
   const hoverText = k => { const c = D.c[k]; return '<b>' + esc(c.n) + '</b><br>Ekspor ' + f(c.t[0]) + ' · Impor ' + f(c.t[1]) + '<br>Neraca ' + sg(c.t[0] - c.t[1]) + ' (US$ miliar)'; };
 
   const mapBox = $('map'), wrap = $('wrap'), plot = $('plot'), ov = $('ov'), chips = $('chips'), mini = $('mini');
-  let token = 0;
+  const LAT = { eq: [-90, 90], me: [-58, 75] }, TOP = 44, BOT = 20; // pita atas (tombol kembali) dan bawah (keterangan) yang dikosongkan
+  const RM = matchMedia('(prefers-reduced-motion: reduce)');
+  // view: kanvas tetap untuk ukuran+proyeksi saat ini; cam: kamera yang sedang tampil {lon, lat, k}
+  let token = 0, raf = 0, view = null, cam = null;
 
   function globalTraces() {
     const m = MET[state.metric], poly = keys.filter(k => !D.c[k].pt), pts = keys.filter(k => D.c[k].pt && D.c[k].ll);
@@ -60,7 +63,8 @@
     const c = D.c[k], sh = unwrap(c.ll[0]) - c.ll[0], bb = c.bb || [c.ll[0] - 1, c.ll[0] + 1, c.ll[1] - 1, c.ll[1] + 1];
     return { lon: [Math.min(IDN_BB[0], bb[0] + sh), Math.max(IDN_BB[1], bb[1] + sh)], lat: [Math.min(IDN_BB[2], bb[2]), Math.max(IDN_BB[3], bb[3])], sh };
   }
-  const gp = () => plot._fullLayout.geo._subplot.projection;
+  const sub = () => plot._fullLayout.geo._subplot, gp = () => sub().projection;
+  const n180 = x => ((x % 360) + 540) % 360 - 180;
   const sw = v => 2.5 + 9 * Math.sqrt(v / 90);
   const bez = (p0, c, p1, t) => { const u = 1 - t; return [u * u * p0[0] + 2 * u * t * c[0] + t * t * p1[0], u * u * p0[1] + 2 * u * t * c[1] + t * t * p1[1]]; };
   // panah melengkung p0 -> p1 dalam piksel; berhenti `stop` px sebelum ujung, kepala segitiga di ujungnya
@@ -79,7 +83,7 @@
   const NS = 'http://www.w3.org/2000/svg';
   const svgEl = (n, a) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
   function chip(cls, html, x, y, tx, ty) {
-    const s = document.createElement('span'); s.className = 'ac ' + cls; s.innerHTML = html;
+    const s = document.createElement('span'); s.className = 'ac fi ' + cls; s.innerHTML = html;
     s.style.left = x + 'px'; s.style.top = y + 'px'; s.style.transform = 'translate(' + tx + ',' + ty + ')'; chips.appendChild(s);
   }
   function sideChip(a, cls, html) {
@@ -91,12 +95,14 @@
     const c = D.c[k], sh = bounds(k).sh, a = P(A), q = P([c.ll[0] + sh, c.ll[1]]);
     const eA = arrow(a, q, sw(c.t[0]), 12), iA = arrow(q, a, sw(c.t[1]), 12);
     for (const [ar, col] of [[eA, '#2a78d6'], [iA, '#eb6834']]) {
-      ov.appendChild(svgEl('path', { class: 'fl', d: ar.d, stroke: col, 'stroke-width': ar.w.toFixed(1) }));
-      ov.appendChild(svgEl('path', { d: ar.head, fill: col }));
+      // panah "tergambar" dari pangkal ke ujung (CSS .drw memakai panjang lintasan --l)
+      const p = ov.appendChild(svgEl('path', { class: 'fl drw', d: ar.d, stroke: col, 'stroke-width': ar.w.toFixed(1) }));
+      p.style.setProperty('--l', p.getTotalLength().toFixed(1));
+      ov.appendChild(svgEl('path', { class: 'fi', d: ar.head, fill: col }));
       ov.appendChild(svgEl('path', { class: 'dsh', d: ar.d }));
     }
-    ov.appendChild(svgEl('circle', { cx: a[0], cy: a[1], r: 5.5, fill: '#0d366b', stroke: '#fff', 'stroke-width': 2 }));
-    ov.appendChild(svgEl('circle', { cx: q[0], cy: q[1], r: 6.5, fill: '#eb6834', stroke: '#fff', 'stroke-width': 2 }));
+    ov.appendChild(svgEl('circle', { class: 'fi f0', cx: a[0], cy: a[1], r: 5.5, fill: '#0d366b', stroke: '#fff', 'stroke-width': 2 }));
+    ov.appendChild(svgEl('circle', { class: 'fi f0', cx: q[0], cy: q[1], r: 6.5, fill: '#eb6834', stroke: '#fff', 'stroke-width': 2 }));
     sideChip(eA, 'cb', 'Ekspor <b>' + f(c.t[0]) + '</b>');
     sideChip(iA, 'co', 'Impor <b>' + f(c.t[1]) + '</b>');
     chip('nm0', '<b>' + esc(c.n) + '</b>', q[0].toFixed(1), (q[1] - 24).toFixed(1), '-50%', '-50%');
@@ -125,48 +131,112 @@
     const mw = mapBox.clientHeight < 380 ? 190 : 240, mh = Math.round(mw * 0.517);
     mini.style.width = mw + 'px'; mini.style.height = mh + 'px'; Plotly.purge(mini);
     await Plotly.newPlot(mini, t, mk({ ...gray, projection: { type: 'equal earth', rotation: { lon: midLon }, scale: 1 } }, mw - 4, mh - 4), { staticPlot: true, displayModeBar: false });
-    if (my !== token) return;
+    return my === token;
   }
-  // peta mini di pojok yang tidak menutupi titik Indonesia atau negara terpilih
+  // peta mini di pojok yang tidak menutupi titik Indonesia, negara terpilih, atau tombol kembali (kiri atas)
   function placeMini(pts, w, h) {
     const mw = mapBox.clientHeight < 380 ? 190 : 240, mh = Math.round(mw * 0.517), m = 12, pad = 50;
-    const spots = [['left', 'bottom'], ['left', 'top'], ['right', 'top']];
-    const rect = ([x, y]) => [x === 'left' ? m : w - m - mw, y === 'top' ? m : h - m - mh];
+    const spots = [['left', 'bottom'], ['right', 'top'], ['left', 'top']];
+    const rect = ([x, y]) => [x === 'left' ? m : w - m - mw, y === 'top' ? (x === 'left' ? TOP : m) : h - m - mh];
     const hits = sp => { const [rx, ry] = rect(sp); return pts.filter(p => p[0] > rx - pad && p[0] < rx + mw + pad && p[1] > ry - pad && p[1] < ry + mh + pad).length; };
-    const best = spots.map(sp => [hits(sp), sp]).sort((a, b) => a[0] - b[0])[0][1];
-    mini.style.left = best[0] === 'left' ? m + 'px' : 'auto'; mini.style.right = best[0] === 'right' ? m + 'px' : 'auto';
-    mini.style.top = best[1] === 'top' ? m + 'px' : 'auto'; mini.style.bottom = best[1] === 'bottom' ? m + 'px' : 'auto';
+    const best = spots.map(sp => [hits(sp), sp]).sort((a, b) => a[0] - b[0])[0][1], [rx, ry] = rect(best);
+    mini.style.left = rx + 'px'; mini.style.top = ry + 'px'; mini.style.right = mini.style.bottom = 'auto';
   }
-  async function drawMap() {
+
+  // ---------- kamera ----------
+  const lay = (zoom, v) => mk({ ...(zoom ? gray : base), projection: { type: TYPE[state.proj], rotation: { lon: n180(v.lon) }, scale: v.k }, center: { lon: n180(v.lon), lat: v.lat }, lataxis: { range: LAT[state.proj] } }, view.RW, view.RH);
+  // Plotly memotong peta ke persegi dunia (clipExtent) sesuai ukuran kanvas saat dibuat. Kanvas dibuat sekali,
+  // diperbesar lalu dipotong .map supaya potongan itu selalu menutupi kotak; ukurannya tetap selama animasi.
+  // Kecocokan (fitScale, persegi dunia) tidak bergantung pada rotasi/pusat/skala, jadi kamera bebas digerakkan.
+  async function setup(my, w, h) {
+    view = null; clearOverlay(); setBox(w, h, 0, 0); Plotly.purge(plot);
+    await Plotly.newPlot(plot, globalTraces(), mk({ ...base, projection: { type: TYPE[state.proj] }, lataxis: { range: LAT[state.proj] } }, w, h), CFG);
+    if (my !== token) return false;
+    bindClick();
+    const s0 = sub(), M = s0.bounds, f0 = s0.fitScale, lat = plot._fullLayout.geo.center.lat;
+    const sc = Math.max(1, w / (M[1][0] - M[0][0]), h / (M[1][1] - M[0][1]));
+    const RW = Math.ceil(w * sc), RH = Math.ceil(h * sc), ox = (RW - w) / 2, oy = (RH - h) / 2;
+    setBox(RW, RH, ox, oy);
+    await Plotly.relayout(plot, { width: RW, height: RH, 'geo.projection.scale': 1 / sc });
+    if (my !== token) return false;
+    const s1 = sub(), M1 = s1.bounds;
+    // ppd: piksel per derajat bujur di khatulistiwa pada skala 1; home: tampilan dunia penuh seperti peta global biasa
+    view = { key: state.proj + w + 'x' + h, w, h, RW, RH, ox, oy, ppd: (M1[1][0] - M1[0][0]) / 360, home: { lon: 0, lat, k: f0 / s1.fitScale } };
+    cam = { ...view.home };
+    return true;
+  }
+  // kamera yang membingkai Indonesia + negara k di antara pita atas dan bawah
+  function target(k) {
+    const b = bounds(k), lon = (b.lon[0] + b.lon[1]) / 2, lat = (b.lat[0] + b.lat[1]) / 2;
+    const s = sub(), P = s.projection, r0 = P.rotate(), c0 = P.center(), k0 = P.scale(), xs = [], ys = [];
+    P.rotate([-lon, 0, 0]).center([0, lat]).scale(s.fitScale);
+    for (const lo of [b.lon[0], lon, b.lon[1]]) for (const la of [b.lat[0], lat, b.lat[1]]) { const p = P([lo, la]); xs.push(p[0]); ys.push(p[1]); }
+    const z = Math.max(1, Math.min(view.w * 0.8 / (Math.max(...xs) - Math.min(...xs)), (view.h - TOP - BOT) * 0.88 / (Math.max(...ys) - Math.min(...ys))));
+    P.scale(s.fitScale * z);
+    const cl = P.invert([s.midPt[0], s.midPt[1] - (TOP - BOT) / 2])[1];
+    P.rotate(r0).center(c0).scale(k0);
+    return { lon, lat: cl, k: z };
+  }
+  // pasang kamera langsung ke proyeksi Plotly lalu gambar ulang path saja (cara yang sama dipakai zoom bawaan Plotly).
+  // fast: selama terbang hanya daratan, negara terpilih, dan Indonesia yang digambar ulang; batas negara, garis pantai,
+  // dan lapisan hover disembunyikan lewat .fly (CSS) lalu muncul lagi setelah mendarat. Hemat ±2/3 kerja per frame.
+  function apply(v, fast) {
+    const s = sub(), P = s.projection.rotate([-v.lon, 0, 0]).center([0, v.lat]).scale(s.fitScale * v.k);
+    if (!fast) return s.render();
+    const path = P.getPath();
+    if (s.basePaths.land) s.basePaths.land.attr('d', path);
+    plot.querySelectorAll('.choroplethlayer .trace:not(:first-child) path').forEach(e => e.setAttribute('d', path(e.__data__.geojson) || ''));
+  }
+  // jalur zoom-pan halus van Wijk & Nuij (seperti d3.interpolateZoom); p = [lon, lat, lebar pandang dalam derajat]
+  function zpath(p0, p1) {
+    const [x0, y0, w0] = p0, [x1, y1, w1] = p1, dx = x1 - x0, dy = y1 - y0, d2 = dx * dx + dy * dy, R = Math.SQRT2;
+    if (d2 < 1e-6) { const S = Math.log(w1 / w0) / R, f = t => [x0 + t * dx, y0 + t * dy, w0 * Math.exp(R * t * S)]; f.S = Math.abs(S); return f; }
+    const d1 = Math.sqrt(d2), b0 = (w1 * w1 - w0 * w0 + 4 * d2) / (4 * w0 * d1), b1 = (w1 * w1 - w0 * w0 - 4 * d2) / (4 * w1 * d1);
+    const r0 = Math.log(Math.sqrt(b0 * b0 + 1) - b0), r1 = Math.log(Math.sqrt(b1 * b1 + 1) - b1), S = (r1 - r0) / R;
+    const f = t => { const s = t * S, u = w0 / (2 * d1) * (Math.cosh(r0) * Math.tanh(R * s + r0) - Math.sinh(r0)); return [x0 + u * dx, y0 + u * dy, w0 * Math.cosh(r0) / Math.cosh(R * s + r0)]; };
+    f.S = S; return f;
+  }
+  const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  // luncurkan kamera dari cam ke `to`; berhenti diam-diam kalau token berganti (pilihan baru mulai dari cam terkini)
+  function glide(to, my) {
+    const W = k => view.w / (view.ppd * k), path = zpath([cam.lon, cam.lat, W(cam.k)], [to.lon, to.lat, W(to.k)]);
+    const dur = path.S < 0.01 ? 0 : Math.min(1500, 600 + 400 * path.S);
+    mapBox.classList.add('fly');
+    return new Promise(res => {
+      let t0 = 0;
+      const step = now => {
+        if (my !== token) return res();
+        t0 = t0 || now;
+        const t = dur ? Math.min(1, (now - t0) / dur) : 1, p = path(ease(t));
+        cam = t < 1 ? { lon: p[0], lat: p[1], k: view.w / (view.ppd * p[2]) } : { ...to };
+        apply(cam, t < 1);
+        if (t < 1) raf = requestAnimationFrame(step); else { mapBox.classList.remove('fly'); res(); }
+      };
+      raf = requestAnimationFrame(step);
+    });
+  }
+  async function drawMap(anim) {
     const my = ++token, w = mapBox.clientWidth, h = mapBox.clientHeight;
     if (!w || !h) return;
-    clearOverlay(); setBox(w, h, 0, 0); Plotly.purge(plot);
-    const k = state.sel, c = k && D.c[k], type = TYPE[state.proj];
-    if (!(c && c.ll)) {
-      mini.classList.add('hide');
-      const geo = { ...base, projection: { type } };
-      if (type === 'mercator') { geo.lonaxis = { range: [-180, 180] }; geo.lataxis = { range: [-58, 75] }; }
-      await Plotly.newPlot(plot, globalTraces(), mk(geo, w, h), CFG);
-      if (my === token) bindClick();
-      return;
+    cancelAnimationFrame(raf);
+    mapBox.classList.add('mv');
+    if (view) Plotly.Fx.unhover(plot); // label hover lama tidak ikut terbang
+    if (!view || view.key !== state.proj + w + 'x' + h) { if (!(await setup(my, w, h))) return; }
+    const k = state.sel, c = k && D.c[k], zoom = !!(c && c.ll), to = zoom ? target(k) : { ...view.home }, fly = anim && !RM.matches;
+    to.lon = cam.lon + n180(to.lon - cam.lon); // bujur lewat jalur terpendek (melintasi garis tanggal bila perlu)
+    if (fly) {
+      // ganti data dulu (abu-abu + negara terpilih), kamera belakangan
+      if (zoom) { await Plotly.react(plot, zoomTraces(k), lay(true, cam), CFG); if (my !== token) return; }
+      await glide(to, my); if (my !== token) return;
     }
-    const b = bounds(k), midLon = (b.lon[0] + b.lon[1]) / 2, midLat = (b.lat[0] + b.lat[1]) / 2;
-    await Plotly.newPlot(plot, zoomTraces(k), mk({ ...gray, projection: { type, rotation: { lon: midLon }, scale: 1 }, center: { lat: midLat } }, w, h), CFG);
-    if (my !== token) return;
-    bindClick();
-    // petanya hanya digambar di dalam persegi dunia; perbesar kanvas lalu potong supaya memenuhi kotak
-    const cr = plot._fullLayout.geo._subplot.clipRect, sc = Math.max(1, w / (+cr.attr('width') || w), h / (+cr.attr('height') || h));
-    const RW = Math.ceil(w * sc), RH = Math.ceil(h * sc);
-    if (sc > 1.001) { setBox(RW, RH, (RW - w) / 2, (RH - h) / 2); await Plotly.relayout(plot, { width: RW, height: RH }); if (my !== token) return; }
-    let P = gp(), xs = [], ys = [];
-    for (const lo of [b.lon[0], midLon, b.lon[1]]) for (const la of [b.lat[0], midLat, b.lat[1]]) { const p = P([lo, la]); xs.push(p[0]); ys.push(p[1]); }
-    const z = Math.max(1, Math.min(w * 0.8 / (Math.max(...xs) - Math.min(...xs)), h * 0.78 / (Math.max(...ys) - Math.min(...ys))));
-    await Plotly.relayout(plot, { 'geo.projection.scale': z });
-    if (my !== token) return;
-    const pts = overlay(gp(), k), ox = (RW - w) / 2, oy = (RH - h) / 2;
-    placeMini(pts.map(p => [p[0] - ox, p[1] - oy]), w, h);
-    mini.classList.remove('hide');
-    drawMini(k, my);
+    // tanpa animasi, atau mendarat di global: pasang data + kamera akhir sekaligus (warna choropleth global muncul di sini)
+    if (!fly || !zoom) { cam = to; mapBox.classList.remove('fly'); await Plotly.react(plot, zoom ? zoomTraces(k) : globalTraces(), lay(zoom, cam), CFG); if (my !== token) return; }
+    clearOverlay();
+    if (!zoom) { mini.classList.add('hide'); mapBox.classList.remove('mv'); return; }
+    const pts = overlay(gp(), k).map(p => [p[0] - view.ox, p[1] - view.oy]);
+    placeMini(pts, w, h);
+    mini.classList.add('fo'); mini.classList.remove('hide'); mapBox.classList.remove('mv');
+    if (await drawMini(k, my)) mini.classList.remove('fo');
   }
 
   // ---------- panel ----------
@@ -214,9 +284,10 @@
   }
   function chrome() {
     const k = state.sel, c = k && D.c[k], zoom = !!(c && c.ll), m = MET[state.metric];
-    $('back').classList.toggle('hide', !c); $('tail').classList.toggle('hide', !c); $('tailNm').textContent = c ? c.n : '';
+    $('back').classList.toggle('hide', !zoom); $('tail').classList.toggle('hide', !c); $('tailNm').textContent = c ? c.n : '';
     $('gBtn').classList.toggle('on', !c); $('cBtn').classList.toggle('on', !!c);
     $('cBtn').textContent = c ? 'Negara: ' + c.n : 'Klik negara untuk detail';
+    $('cBtn').title = c ? c.n : '';
     $('metSeg').classList.toggle('hide', zoom);
     $('lgd').classList.toggle('hide', zoom);
     $('mapSub').textContent = zoom ? 'zoom ke Indonesia dan mitra · panah bergerak, tebal = nilai' : c ? 'negara ini terlalu kecil untuk tampil di peta' : 'klik negara di peta atau di daftar kanan';
@@ -227,7 +298,7 @@
     document.querySelectorAll('#projSeg .sg').forEach(b => b.classList.toggle('on', b.dataset.p === state.proj));
     document.querySelectorAll('#metSeg .sg').forEach(b => b.classList.toggle('on', b.dataset.m === state.metric));
   }
-  function render(redraw = true) { chrome(); kpis(); rows(); products(); if (redraw) drawMap(); }
+  function render(redraw = true) { chrome(); kpis(); rows(); products(); if (redraw) drawMap(true); }
   function select(k) {
     state.sel = k;
     try { history.replaceState(null, '', k ? '#' + k : location.pathname + location.search); } catch (e) { /* file:// atau iframe */ }
@@ -247,7 +318,7 @@
   new ResizeObserver(() => {
     if (mapBox.clientWidth === lw && mapBox.clientHeight === lh) return;
     lw = mapBox.clientWidth; lh = mapBox.clientHeight;
-    clearTimeout(rt); rt = setTimeout(drawMap, 150);
+    clearTimeout(rt); rt = setTimeout(() => drawMap(false), 150);
   }).observe(mapBox);
 
   const h0 = decodeURIComponent((location.hash || '').slice(1));
